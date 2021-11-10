@@ -9,7 +9,7 @@ from torch import optim
 def sample_action(act_probs: tensor) -> int:
     return torch.multinomial(act_probs,num_samples=1).squeeze()
 
-# Baseline policy net
+# Baseline policy net from course lecture 8
 class PolicyNet(nn.Module):
     """Policy network"""
 
@@ -31,7 +31,7 @@ class PolicyNet(nn.Module):
     def loss(self, action_probabilities, returns):
         return -torch.mean(torch.mul(torch.log(action_probabilities), returns))
 
-
+# https://github.com/simoninithomas/Deep_reinforcement_learning_Course/blob/master/RND%20Montezuma's%20revenge%20PyTorch/model.py
 
 from torch.nn import init
 import numpy as np
