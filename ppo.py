@@ -10,7 +10,7 @@ def sample_action(act_probs: tensor) -> int:
     return torch.multinomial(act_probs,num_samples=1).squeeze()
 
 # Baseline policy net from course lecture 8
-class PolicyNet(nn.Module):
+class PolicyNet(nn.Module): #PO
     """Policy network"""
 
     def __init__(self, n_inputs, n_hidden, n_outputs, learning_rate):
@@ -39,11 +39,13 @@ import numpy as np
 class Flatten(nn.Module):
     def forward(self, input):
         return input.view(input.size(0), -1)
+
 """
 In RND there are 2 networks:
 - Target Network: generates a constant output for a given state
 - Prediction network: tries to predict the target network's output
 """ 
+
 class RNDModel(nn.Module):
     def __init__(self, input_size, output_size):
         super(RNDModel, self).__init__()

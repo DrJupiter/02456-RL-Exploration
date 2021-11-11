@@ -11,3 +11,4 @@
     
 - Read pixel input from window
   - What is a gym wrapper
+
