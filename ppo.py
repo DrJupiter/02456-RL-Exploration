@@ -10,7 +10,7 @@ def sample_action(act_probs: tensor) -> int:
     return torch.multinomial(act_probs,num_samples=1).squeeze()
 
 # Baseline policy net from course lecture 8
-class PolicyNet(nn.Module):
+class PolicyNet(nn.Module): #PO
     """Policy network"""
 
     def __init__(self, n_inputs, n_hidden, n_outputs, learning_rate):
@@ -32,4 +32,3 @@ class PolicyNet(nn.Module):
         return -torch.mean(torch.mul(torch.log(action_probabilities), returns))
 
 # https://github.com/simoninithomas/Deep_reinforcement_learning_Course/blob/master/RND%20Montezuma's%20revenge%20PyTorch/model.py
-
