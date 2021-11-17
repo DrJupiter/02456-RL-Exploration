@@ -15,11 +15,11 @@ dim = observation.shape
 print(action_size,dim)
 
 from rnd import RNDModel
-from action_embed import act_embed
+from action_embed import act_embed #obs_act_embed
 
-RND_NS = RNDModel(dim,action_size)
+RND_NS = RNDModel(dim,action_size) # for rewards
 # +1, becasue we can make it (3+1)xHxW via action embedding
-RND_ACT = RNDModel((dim[0],dim[1],dim[2]+1),action_size)
+RND_ACT = RNDModel((dim[0],dim[1],dim[2]+1),action_size) # for action bonus
 RND_NS.cuda()
 
 
