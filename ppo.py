@@ -80,13 +80,12 @@ class PolicyNet(nn.Module): #PO
              nn.Linear(512, 1)
         )
 
-
-
         # training
 
     def forward(self, x):
+        x_copy = x.detach().clone()
         x = self.actor(x)
-        v = self.critic(x)
+        v = self.critic(x_copy)
         return F.softmax(x, dim=1), v
     
     def forward_critic(self,x):

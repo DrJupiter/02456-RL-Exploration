@@ -268,7 +268,7 @@ def play(EPOCHS, observation):
         observation = tensor(env.reset()).cuda().double().permute((2,1,0)).unsqueeze(0)
         
         list_obs[0] = observation
-        print(list_obs[0].size())
+        #print(list_obs[0].size())
         
         # Loop through the trajectory using prior ops
         PPO.eval()
