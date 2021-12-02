@@ -254,7 +254,7 @@ def single_pass(observation):
         observation = env.reset()
 
     # Return stuff, so we can save it
-    return observation, action.unsqueeze(0), policy_out.log().squeeze(0), reward, v_t.squeeze(0), act_norm, next_state_bonus
+    return observation, action.unsqueeze(0), policy_out.log().squeeze(0), reward, v_t.squeeze(0), act_bonus, next_state_bonus
 
 
 def play(EPOCHS, observation):
