@@ -1,7 +1,7 @@
 
 import torch
 from torch import tensor
-from torch import optim
+#from torch import optim
 import torch.nn.functional as F 
 from torch.optim import Adam
 torch.autograd.set_detect_anomaly(True)
@@ -9,7 +9,7 @@ import gym
 
 # make env
 env_name = "MontezumaRevenge-v0"
-env = gym.make(env_name)
+env = gym.make(env_name, render_mode='rgb_array')
 
 # get ini state / obs
 action_size = env.action_space.n
@@ -17,45 +17,58 @@ observation = tensor(env.reset()).cuda().double() # BUG?: take env.reset out
 
 dim = observation.size()
 
-# print state dims
-print(f"the action size is {action_size} and the input dimensionality is {dim}")
-
 # import from other files
 from ppo import PolicyNet, sample_action
 from rnd import RNDModel
 from action_embed import obs_act_embed # act_embed
 
-from utils import compute_gae, storage_list, save_model, load_model, visualize_play 
+from utils import compute_gae, stack_lists, storage_list, save_model, load_model, visualize_play 
 
-# Ini global variables
-GAMMA = 0.99
+from user_arg import user_arg
 
-# Ini nets
-PPO = PolicyNet(n_inputs = dim, n_outputs = action_size)
-PPO.cuda()
-PPO.double()
-PPO_Optim = Adam(PPO.parameters(), lr=1e-4)
+# Initialize global variables
+# DEFAULT: False, int(10e7), 0.99, 10, 4, [1e-4,1e-4,1e-4] 
+LOAD_MODELS, EPOCHS, GAMMA, LEN_TRAJECTORY, BATCH_SIZE, LEARNING_RATES= user_arg()
+BATCH_SIZE_RND = 4
 
+if not LOAD_MODELS:
+    # Initialize nets
+    PPO = PolicyNet(n_inputs = dim, n_outputs = action_size)
+    PPO.cuda()
+    PPO.double()
+    PPO_Optim = Adam(PPO.parameters(), lr=LEARNING_RATES[0])
+    
+    
+    RND_NSB = RNDModel(dim,action_size) # for next-state bonus
+    RND_NSB.cuda()
+    RND_NSB.double()
+    RND_NSB_Optim = Adam(RND_NSB.parameters(), lr=LEARNING_RATES[1])
+    
+    # +1, becasue we can make it (3+1)xHxW via action embedding
+    RND_ACT = RNDModel((dim[0],dim[1],dim[2]+1),action_size) # for action bonus
+    RND_ACT.cuda()
+    RND_ACT.double()
+    RND_ACT_Optim = Adam(RND_ACT.parameters(), lr=LEARNING_RATES[2])
+    
+else:
+    PPO = load_model(PolicyNet, PATH = "./models/PPO_train", n_inputs = dim, n_outputs = action_size)
+    RND_NSB = load_model(RNDModel, PATH = "./models/RND_NSB_train", input_size = dim, output_size = action_size)
+    RND_ACT = load_model(RNDModel, PATH = "./models/RND_ACT_train", input_size = (dim[0],dim[1],dim[2]+1), output_size = action_size)
+    
+    PPO.cuda().double()
+    RND_NSB.cuda().double()
+    RND_ACT.cuda().double()
 
-RND_NSB = RNDModel(dim,action_size) # for rewards
-RND_NSB.cuda()
-RND_NSB.double()
-RND_NSB_Optim = Adam(RND_NSB.parameters(), lr=1e-4)
+    PPO.train()
+    RND_NSB.train()
+    RND_ACT.train()
 
-# +1, becasue we can make it (3+1)xHxW via action embedding
-RND_ACT = RNDModel((dim[0],dim[1],dim[2]+1),action_size) # for action bonus
-RND_ACT.cuda()
-RND_ACT.double()
-RND_ACT_Optim = Adam(RND_ACT.parameters(), lr=1e-4)
+    PPO_Optim = Adam(PPO.parameters(), lr=1e-4)
+    RND_NSB_Optim = Adam(RND_NSB.parameters(), lr=1e-4)
+    RND_ACT_Optim = Adam(RND_ACT.parameters(), lr=1e-4)
 
 
 ## lists
-LEN_TRAJECTORY = 10
-BATCH_SIZE_RND = 4
-
-# Input order
-# observation, action.unsqueeze(), policy_out.log(), reward, v_t, act_norm, next_state_bonus
-
 
 
 def single_loss_ppo(ratio, reward, A, V, epsilon = 0.2):
@@ -66,30 +79,30 @@ def single_loss_ppo(ratio, reward, A, V, epsilon = 0.2):
     l_clip = torch.min(ratio * A, torch.clamp(ratio, 1-epsilon, 1+epsilon) * A)
     l_critic = (reward - V)**2
     l_p = 0.5 * l_critic + l_clip # BUG: add entropy
-    return l_p 
+    return l_p
 
 def update_rnd(actb,actions,nsb):
     RND_ACT_Optim.zero_grad()
     RND_NSB_Optim.zero_grad()
-    
-    #sequential_index = torch.arange(0, actb.size(0))
-    sequential_index = torch.arange(0, len(actb))
-    loss_act = torch.zeros(len(actb)).cuda()
-    for i, a in zip(sequential_index,actions):
-        loss_act[i] = actb[i][a]
-    loss_act = loss_act.mean()
+     
+    sequential_index = torch.arange(0, actb.size(0))
+    #sequential_index = torch.arange(0, len(actb))
+    # loss_act = torch.zeros(len(actb)).cuda()
+    # for i, a in zip(sequential_index,actions):
+    #     loss_act[i] = actb[i][a]
+    # loss_act = loss_act.mean()
 
-    loss_nsb = sum(nsb)/len(nsb)
+    # loss_nsb = sum(nsb)/len(nsb)
 
-#    loss_act = actb[sequential_index,actions].mean()
-#    loss_nsb = nsb.mean()
+    loss_act = actb[sequential_index,actions].mean()
+    loss_nsb = nsb.mean()
     loss_act.backward()
     loss_nsb.backward()
     
     RND_ACT_Optim.step()
     RND_NSB_Optim.step()
 
-def update_ppo(states, actions, log_probs, rewards, values, actnorm):
+def update_ppo(states, actions, log_probs, rewards, values, actnorm, batchsize):
     """
     1. Take some values which should all be with no grad.
     2. compute gradients
@@ -106,58 +119,35 @@ def update_ppo(states, actions, log_probs, rewards, values, actnorm):
     # Calc GAE / Advantage
     advantages = compute_gae(values, rewards, torch.ones(len(rewards)),LEN_TRAJECTORY) #BUG: it makes no sense to use these sizes. What should the final GAE value be defined by?
 
-    # TODO: perform a permutation
-    # Kører igennem det hele 2 gange
-    # GEM (run 1)
-        # Run thought the trajectory decided by the policy and action bonus
-            # save
-                # rewards (env_reward)
-                # value function (critic value function)
-                # state action pairs (obs_act_embed)
-                # log_prop (policy)  
-                    # Så behøver vi vel ikke holde en kopi?
-                # next state bonus (fra RND_NSB)
-                # action bonus (fra RND_ACT)
-
-    # Update (run 2)
-        # Runs the state action pairs in random order
-        # uses info from first run to calc loss
-        # uses the fact that we have run it again s.t. we have the gradients
-        # ...
-        # profit
-
-    # ADD TRAJECTORY 
-        # sample some state
-        # perform actions X times
-        # use this to find discounted rewards
-
-    batchsize = tensor(4)
+    batchsize = tensor(batchsize)
     assert batchsize <= LEN_TRAJECTORY, "Batch size shouldn't be larger, than the trajectory length"
 
     batchtes = int(torch.ceil(LEN_TRAJECTORY / batchsize))
     # TODO: repeat this step equal to some number we pass in (makes sense as we only take small steps)
     for i in range(batchtes):
-    
+        
         # find indexs for batches
         index = slice(i * batchsize, min((i+1) * batchsize, LEN_TRAJECTORY))
 
+        states_i, chosen_actions, actnorm_i, log_probs_i, rewards_i, advantages_i = stack_lists(states[index], actions[index], actnorm, log_probs, rewards[index], advantages[index]) 
+
         ### FIND RATIO
         # Get the parameters for the distribution
-        parameters, values_now = PPO(states[index])
+        parameters, values_now = PPO(states_i.squeeze(1))
         # Find the log_prop for the current model
         # we apply log directly, since we use a multinomial distribution to sample actions
         sequential_index = torch.arange(0, parameters.size(0))
 
         # find chosen actions
-        chosen_actions = actions[index]
+        #chosen_actions = torch.stack(actions[index])
 
-        log_probs_now = (parameters[sequential_index,chosen_actions] + actnorm[sequential_index, actions]).log()
+        log_probs_now = (F.softmax(parameters[sequential_index,chosen_actions] + actnorm_i[sequential_index, chosen_actions],dim=1)).log()
 
         # Find ratio pi(a|s)_now/pi(a|s)_old
-        ratios = (log_probs_now - log_probs[sequential_index,chosen_actions]).exp()     
+        ratios = (log_probs_now - log_probs_i[sequential_index,chosen_actions]).exp()
 
         ### Get PPO loss + actb + nsb
-        loss = single_loss_ppo(ratios, rewards[index], advantages[index],values_now).mean()
+        loss = single_loss_ppo(ratios, rewards_i, advantages_i, values_now).mean()
         # BUG?: pass in all values, except the final one for which we don't know the reward, but we use to calculate the gae.
 
         # zero grad all optimizers
@@ -209,16 +199,16 @@ def single_pass(observation):
         act_norm = (act_bonus - act_bonus.mean())/act_bonus.std() # BUG?: clone and detach act_bonus for loss later
     
     # get action from sample of beta
-        beta_param = F.softmax(policy_out + act_norm)
+        beta_param = F.softmax(policy_out + act_norm,dim=1)
         action = sample_action(beta_param) #BUG?: no detach needed here (i think) as we dont run backward on the action in any way
     
     # perform action
-    observation, env_reward, done, _ = env.step(action)
-    
-    ## NSB 
-    # Get RND prediction and target nets for reward
-    observation = tensor(observation).unsqueeze(0).cuda().double()
-    observation = observation.permute((0,3,2,1)) 
+        observation, env_reward, done, _ = env.step(action)
+        
+        ## NSB 
+        # Get RND prediction and target nets for reward
+        observation = tensor(observation).unsqueeze(0).cuda().double()
+        observation = observation.permute((0,3,2,1)) 
     
     # get values
     pred_nsb, target_nsb = RND_NSB(observation)
@@ -234,6 +224,7 @@ def single_pass(observation):
         reward = next_state_bonus.detach().clone() + env_reward # BUG?: Deatch the next state bonus here to avoid double update and possibly nonsensical gradients
 
     ### reset if model died or achieved goal state
+    #print(f"Are we done? {done}")
     if done:    
         observation = env.reset()
         observation = tensor(observation).unsqueeze(0).cuda().double()
@@ -243,10 +234,11 @@ def single_pass(observation):
     return observation, action.unsqueeze(0), beta_param.log().squeeze(0), reward, v_t.squeeze(0), act_bonus, next_state_bonus, act_norm
     
 
-def play(EPOCHS, observation):
+def play(epochs, observation):
     # observation = env.reset()
     
-    for _ in range(EPOCHS):
+    for _ in range(epochs):
+
 
         list_log_prop, list_reward_prime, list_value_fnc, list_acts, list_obs,list_act_bonus,list_ns_bonus, list_actnorm = storage_list(LEN_TRAJECTORY)
 
@@ -254,53 +246,67 @@ def play(EPOCHS, observation):
     
 
         # setting initial obs
-        observation = tensor(env.reset()).cuda().double().permute((2,1,0)).unsqueeze(0)
+        #observation = tensor(env.reset()).cuda().double().permute((2,1,0)).unsqueeze(0)
         
         list_obs[0] = observation
         #print(list_obs[0].size())
         
-        ## Loop through the trajectory using prior ops
+        ### Loop through the trajectory using prior ops
         PPO.eval()
-        for t in range(LEN_TRAJECTORY):
 
-            list_obs[t+1], list_acts[t], list_log_prop[t], list_reward_prime[t], list_value_fnc[t], list_act_bonus[t], list_ns_bonus[t], list_actnorm[t] = single_pass(list_obs[t])
+        for t in range(LEN_TRAJECTORY):
+            
             ## UPDATE RND
             # in order for observation to be updated
             if t != 0 and t % BATCH_SIZE_RND == 0:
-                print(t-BATCH_SIZE_RND,t)
+                #print(t-BATCH_SIZE_RND,t)
                 index = slice(t-BATCH_SIZE_RND,t)
-                #x,y,z = torch.stack(list_act_bonus[index]),torch.stack(list_acts[index]),torch.stack(list_ns_bonus[index])
-                x,y,z = list_act_bonus[index],list_acts[index],list_ns_bonus[index]
-                     
-                     
-                update_rnd(x,y,z)
+                      
+                update_rnd(*stack_lists(list_act_bonus[index],list_acts[index],list_ns_bonus[index]))
+
+            list_obs[t+1], list_acts[t], list_log_prop[t], list_reward_prime[t], list_value_fnc[t], list_act_bonus[t], list_ns_bonus[t], list_actnorm[t] = single_pass(list_obs[t])
 
         ## Final stuff after loop
         # Update RND's for the missing steps (In the case where LEN_TRAJECTORY isnt divisible by BATCH_SIZE_RND)
         index = slice(t - (t % BATCH_SIZE_RND),t)
-        update_rnd(list_act_bonus[index],list_acts[index],list_ns_bonus[index])
+        update_rnd(*stack_lists(list_act_bonus[index],list_acts[index],list_ns_bonus[index]))
 
         # Add final value
-        list_value_fnc[LEN_TRAJECTORY] = PPO.forward_critic(list_obs[LEN_TRAJECTORY].unsqueeze(0))
+        list_value_fnc[LEN_TRAJECTORY] = PPO.forward_critic(list_obs[LEN_TRAJECTORY]).squeeze(0)
 
 
-
-        ## Update nets
+        ### Update nets
         PPO.train()
-        update_ppo(list_obs, list_acts, list_log_prop, list_reward_prime, list_value_fnc, list_act_bonus, list_ns_bonus, list_actnorm)
+        update_ppo(list_obs, list_acts, list_log_prop, list_reward_prime, list_value_fnc, list_actnorm, BATCH_SIZE)
 
-        #observation = list_obs[-1].detach().clone()
-
+        observation = list_obs[-1].detach().clone()
     
-#save_model(PPO, PATH = "./models/PPO_test_1")
-model = load_model(PolicyNet,PATH = "./models/PPO_test_1", n_inputs = dim, n_outputs = action_size, )
-model.cuda().double()
+    return observation
+    
 
+observation = observation.permute((2,1,0)).unsqueeze(0)
 
-#print(model(observation.permute((2,1,0)).unsqueeze(0)))
-play(5, observation.permute((2,1,0)).unsqueeze(0))
+for checkpoint in range(2):
 
-visualize_play(action_size, dim, PPO, RND_ACT, env, observation = None, reset = True, N_moves = 1000)
+    observation = play(EPOCHS, observation)
+
+    print(f"Reached checkpoint {checkpoint}. Currently trained for {(checkpoint+1) * EPOCHS * LEN_TRAJECTORY} steps")
+    save_model(PPO, PATH = "./models/tmp/PPO")
+    save_model(RND_NSB, PATH = "./models/tmp/RND_NSB")
+    save_model(RND_ACT, PATH = "./models/tmp/RND_ACT")
+
+PPO.eval()
+RND_ACT.eval()
+RND_NSB.eval()
+
+VISUALIZE = False
+if VISUALIZE:
+    visualize_play(action_size, dim, PPO, RND_ACT, env, observation = None, N_moves = 1000)
+
+# Saving models
+save_model(PPO, PATH = "./models/PPO_train")
+save_model(RND_NSB, PATH = "./models/RND_NSB_train")
+save_model(RND_ACT, PATH = "./models/RND_ACT_train")
 
 
 env.close()

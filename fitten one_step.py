@@ -140,7 +140,7 @@ def update(states, actions, log_probs, rewards, values, actb, nsb):
     updating weights \\
     loop 
     """
-
+    
     # Calc GAE / Advantage
     advantages = compute_gae(values.detach().clone(), rewards.detach().clone(), torch.ones(len(rewards))) #BUG: it makes no sense to use these sizes. What should the final GAE value be defined by?
 
