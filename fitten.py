@@ -27,7 +27,7 @@ from utils import compute_gae, stack_lists, storage_list, save_model, load_model
 from user_arg import user_arg
 
 # Initialize global variables
-# DEFAULT: False, int(10e7), 0.99, 10, 4, [1e-4,1e-4,1e-4] 
+# DEFAULT: False, int(10e7), 0.99, 10, 4, [30e-5,1e-4,1e-4] 
 LOAD_MODELS, EPOCHS, GAMMA, LEN_TRAJECTORY, BATCH_SIZE, LEARNING_RATES= user_arg()
 BATCH_SIZE_RND = 4
 
@@ -63,9 +63,9 @@ else:
     RND_NSB.train()
     RND_ACT.train()
 
-    PPO_Optim = Adam(PPO.parameters(), lr=1e-4)
-    RND_NSB_Optim = Adam(RND_NSB.parameters(), lr=1e-4)
-    RND_ACT_Optim = Adam(RND_ACT.parameters(), lr=1e-4)
+    PPO_Optim = Adam(PPO.parameters(), lr=LEARNING_RATES[0])
+    RND_NSB_Optim = Adam(RND_NSB.parameters(), lr=LEARNING_RATES[1])
+    RND_ACT_Optim = Adam(RND_ACT.parameters(), lr=LEARNING_RATES[2])
 
 
 ## lists
@@ -117,7 +117,7 @@ def update_ppo(states, actions, log_probs, rewards, values, actnorm, batchsize):
     """
 
     # Calc GAE / Advantage
-    advantages = compute_gae(values, rewards, torch.ones(len(rewards)),LEN_TRAJECTORY) #BUG: it makes no sense to use these sizes. What should the final GAE value be defined by?
+    advantages = compute_gae(values, rewards, torch.ones(len(rewards)),LEN_TRAJECTORY, GAMMA) #BUG: it makes no sense to use these sizes. What should the final GAE value be defined by?
 
     batchsize = tensor(batchsize)
     assert batchsize <= LEN_TRAJECTORY, "Batch size shouldn't be larger, than the trajectory length"
