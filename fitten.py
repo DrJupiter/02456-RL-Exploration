@@ -286,7 +286,8 @@ def play(epochs, observation):
 
 observation = observation.permute((2,1,0)).unsqueeze(0)
 
-for checkpoint in range(2):
+
+for checkpoint in range(10):
 
     observation = play(EPOCHS, observation)
 

@@ -2,7 +2,7 @@ import getopt, sys
 
 
 def user_arg():
-    load_models, epochs, gamma, len_trajectory, batch_size, lr = True, int(10e7), 0.99, 10, 4, [30e-5,1e-4,1e-4]
+    load_models, epochs, gamma, len_trajectory, batch_size, lr = False, int(10e7), 0.99, 10, 4, [30e-5,1e-4,1e-4]
     argument_list = sys.argv[1:]
 
     # load, epochs: int, gamma: float, trajectory: int, batches:int, 
