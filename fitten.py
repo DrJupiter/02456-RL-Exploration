@@ -1,7 +1,6 @@
 
 import torch
 from torch import tensor
-#from torch import optim
 import torch.nn.functional as F 
 from torch.optim import Adam
 torch.autograd.set_detect_anomaly(True)
@@ -27,7 +26,7 @@ from utils import compute_gae, stack_lists, storage_list, save_model, load_model
 from user_arg import user_arg
 
 # Initialize global variables
-# DEFAULT: False, int(10e7), 0.99, 10, 4, [30e-5,1e-4,1e-4] 
+# DEFAULT: True, int(10e7), 0.99, 10, 4, [30e-5,1e-4,1e-4] 
 LOAD_MODELS, EPOCHS, GAMMA, LEN_TRAJECTORY, BATCH_SIZE, LEARNING_RATES= user_arg()
 BATCH_SIZE_RND = 4
 
@@ -51,9 +50,9 @@ if not LOAD_MODELS:
     RND_ACT_Optim = Adam(RND_ACT.parameters(), lr=LEARNING_RATES[2])
     
 else:
-    PPO = load_model(PolicyNet, PATH = "./models/PPO_train", n_inputs = dim, n_outputs = action_size)
-    RND_NSB = load_model(RNDModel, PATH = "./models/RND_NSB_train", input_size = dim, output_size = action_size)
-    RND_ACT = load_model(RNDModel, PATH = "./models/RND_ACT_train", input_size = (dim[0],dim[1],dim[2]+1), output_size = action_size)
+    PPO = load_model(PolicyNet, PATH = "./models/tmp/PPO", n_inputs = dim, n_outputs = action_size)
+    RND_NSB = load_model(RNDModel, PATH = "./models/tmp/RND_NSB", input_size = dim, output_size = action_size)
+    RND_ACT = load_model(RNDModel, PATH = "./models/tmp/RND_ACT", input_size = (dim[0],dim[1],dim[2]+1), output_size = action_size)
     
     PPO.cuda().double()
     RND_NSB.cuda().double()
@@ -102,7 +101,7 @@ def update_rnd(actb,actions,nsb):
     RND_ACT_Optim.step()
     RND_NSB_Optim.step()
 
-def update_ppo(states, actions, log_probs, rewards, values, actnorm, batchsize):
+def update_ppo(states, actions, log_probs, rewards, values, actnorm, batchsize, masks):
     """
     1. Take some values which should all be with no grad.
     2. compute gradients
@@ -117,7 +116,7 @@ def update_ppo(states, actions, log_probs, rewards, values, actnorm, batchsize):
     """
 
     # Calc GAE / Advantage
-    advantages = compute_gae(values, rewards, torch.ones(len(rewards)),LEN_TRAJECTORY, GAMMA) #BUG: it makes no sense to use these sizes. What should the final GAE value be defined by?
+    advantages = compute_gae(values, rewards, masks, LEN_TRAJECTORY, GAMMA) #BUG: it makes no sense to use these sizes. What should the final GAE value be defined by?
 
     batchsize = tensor(batchsize)
     assert batchsize <= LEN_TRAJECTORY, "Batch size shouldn't be larger, than the trajectory length"
@@ -204,7 +203,9 @@ def single_pass(observation):
     
     # perform action
         observation, env_reward, done, _ = env.step(action)
-        
+
+        # For frame skipping, 0 = NO_ACTION
+        env.step(0)
         ## NSB 
         # Get RND prediction and target nets for reward
         observation = tensor(observation).unsqueeze(0).cuda().double()
@@ -229,9 +230,14 @@ def single_pass(observation):
         observation = env.reset()
         observation = tensor(observation).unsqueeze(0).cuda().double()
         observation = observation.permute((0,3,2,1)) 
+        
+        # For masking
+        done = -1
+    else:
+        done = 1
 
     # Return stuff, so we can save it
-    return observation, action.unsqueeze(0), beta_param.log().squeeze(0), reward, v_t.squeeze(0), act_bonus, next_state_bonus, act_norm
+    return observation, action.unsqueeze(0), beta_param.log().squeeze(0), reward, v_t.squeeze(0), act_bonus, next_state_bonus, act_norm, done 
     
 
 def play(epochs, observation):
@@ -240,7 +246,7 @@ def play(epochs, observation):
     for _ in range(epochs):
 
 
-        list_log_prop, list_reward_prime, list_value_fnc, list_acts, list_obs,list_act_bonus,list_ns_bonus, list_actnorm = storage_list(LEN_TRAJECTORY)
+        list_log_prop, list_reward_prime, list_value_fnc, list_acts, list_obs,list_act_bonus,list_ns_bonus, list_actnorm, list_masks = storage_list(LEN_TRAJECTORY)
 
         
     
@@ -264,7 +270,7 @@ def play(epochs, observation):
                       
                 update_rnd(*stack_lists(list_act_bonus[index],list_acts[index],list_ns_bonus[index]))
 
-            list_obs[t+1], list_acts[t], list_log_prop[t], list_reward_prime[t], list_value_fnc[t], list_act_bonus[t], list_ns_bonus[t], list_actnorm[t] = single_pass(list_obs[t])
+            list_obs[t+1], list_acts[t], list_log_prop[t], list_reward_prime[t], list_value_fnc[t], list_act_bonus[t], list_ns_bonus[t], list_actnorm[t], list_masks[t] = single_pass(list_obs[t])
 
         ## Final stuff after loop
         # Update RND's for the missing steps (In the case where LEN_TRAJECTORY isnt divisible by BATCH_SIZE_RND)
@@ -277,7 +283,7 @@ def play(epochs, observation):
 
         ### Update nets
         PPO.train()
-        update_ppo(list_obs, list_acts, list_log_prop, list_reward_prime, list_value_fnc, list_actnorm, BATCH_SIZE)
+        update_ppo(list_obs, list_acts, list_log_prop, list_reward_prime, list_value_fnc, list_actnorm, BATCH_SIZE, list_masks)
 
         observation = list_obs[-1].detach().clone()
     

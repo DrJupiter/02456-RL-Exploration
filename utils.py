@@ -56,6 +56,7 @@ def storage_list(len_trajec):
     # rewards
     list_reward_prime = [None] * len_trajec
     list_value_fnc    = [None] * (len_trajec + 1)
+    list_masks     = [None] * len_trajec 
 
     # state action lists
     list_acts         = [None] * len_trajec        
@@ -66,7 +67,7 @@ def storage_list(len_trajec):
     list_act_norm     = [None] * len_trajec 
     list_ns_bonus     = [None] * len_trajec 
 
-    return list_log_prop, list_reward_prime, list_value_fnc, list_acts, list_obs, list_act_bonus, list_ns_bonus, list_act_norm
+    return list_log_prop, list_reward_prime, list_value_fnc, list_acts, list_obs, list_act_bonus, list_ns_bonus, list_act_norm, list_masks
 
 
 def compute_gae(values, rewards, masks, len_trajec, gamma=0.99, tau=0.95):
@@ -79,6 +80,9 @@ def compute_gae(values, rewards, masks, len_trajec, gamma=0.99, tau=0.95):
 
     BUG?: Adv = gae - vals
     """
+    
+    # masks
+
     gae = 0
     returns = [None] * len_trajec
     # returns = torch.zeros((len_trajec)).cuda().double()
@@ -128,6 +132,9 @@ def single_optimal_move(observation, action_size, dim, PPO_model, RND_ACT_model,
     
     # perform action
     observation, env_reward, done, _ = env.step(action)
+
+    # For frameskip and consistency
+    env.step(0)
     
     ## NSB 
     # Get RND prediction and target nets for reward
