@@ -20,10 +20,10 @@ class PolicyNet(nn.Module): #PO
     def __init__(self, n_inputs, n_outputs):
         super(PolicyNet, self).__init__()
         # network
-        self.input_size = n_inputs # WxHxC reshaped into CxHxW. Default 210x160x3
+        self.input_size = n_inputs # WxHxC reshaped into CxHxW. Default 56x56x3
         self.output_size = n_outputs 
  
-        feature_output = 2**11 * 11 # the symmetry # still very cursed
+        feature_output = 576 # 2**11 * 11 # the symmetry # still very cursed
  
         # Prediction network
         self.actor = nn.Sequential(

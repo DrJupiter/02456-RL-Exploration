@@ -1,19 +1,25 @@
-
+# %%
 import torch
 from torch import tensor
 import torch.nn.functional as F 
 from torch.optim import Adam
 torch.autograd.set_detect_anomaly(True)
 import gym
+from gym_minigrid.wrappers import *
 
 # make env
-env_name = "MontezumaRevenge-v0"
-env = gym.make(env_name, render_mode='rgb_array')
+# env_name = "MontezumaRevenge-v0"
+# env = gym.make(env_name, render_mode='rgb_array')
+env = gym.make('MiniGrid-MultiRoom-N4-S5-v0')
+env = RGBImgPartialObsWrapper(env) # Get pixel observations
+env = ReseedWrapper(env,seeds=[2])
+env = ImgObsWrapper(env) # Get rid of the 'mission' field
+
+
 
 # get ini state / obs
 action_size = env.action_space.n
 observation = tensor(env.reset()).cuda().double() # BUG?: take env.reset out
-
 dim = observation.size()
 
 # import from other files
@@ -21,14 +27,17 @@ from ppo import PolicyNet, sample_action
 from rnd import RNDModel
 from action_embed import obs_act_embed # act_embed
 
-from utils import compute_gae, stack_lists, storage_list, save_model, load_model, visualize_play 
+from utils import compute_gae, stack_lists, storage_list, save_model, load_model, visualize_play, heatmap
 
 from user_arg import user_arg
 
 # Initialize global variables
-# DEFAULT: True, int(10e7), 0.99, 10, 4, [30e-5,1e-4,1e-4] 
+# DEFAULT: 
+# True,     int(10e7), 0.99,     10,           4,      [30e-5,1e-4,1e-4] 
 LOAD_MODELS, EPOCHS, GAMMA, LEN_TRAJECTORY, BATCH_SIZE, LEARNING_RATES= user_arg()
 BATCH_SIZE_RND = 4
+LIST_LOCATIONS = []
+
 
 if not LOAD_MODELS:
     # Initialize nets
@@ -50,9 +59,9 @@ if not LOAD_MODELS:
     RND_ACT_Optim = Adam(RND_ACT.parameters(), lr=LEARNING_RATES[2])
     
 else:
-    PPO = load_model(PolicyNet, PATH = "./models/tmp/PPO", n_inputs = dim, n_outputs = action_size)
-    RND_NSB = load_model(RNDModel, PATH = "./models/tmp/RND_NSB", input_size = dim, output_size = action_size)
-    RND_ACT = load_model(RNDModel, PATH = "./models/tmp/RND_ACT", input_size = (dim[0],dim[1],dim[2]+1), output_size = action_size)
+    PPO = load_model(PolicyNet, PATH = "./grid_models/tmp/PPO", n_inputs = dim, n_outputs = action_size)
+    RND_NSB = load_model(RNDModel, PATH = "./grid_models/tmp/RND_NSB", input_size = dim, output_size = action_size)
+    RND_ACT = load_model(RNDModel, PATH = "./grid_models/tmp/RND_ACT", input_size = (dim[0],dim[1],dim[2]+1), output_size = action_size)
     
     PPO.cuda().double()
     RND_NSB.cuda().double()
@@ -93,7 +102,7 @@ def update_rnd(actb,actions,nsb):
 
     # loss_nsb = sum(nsb)/len(nsb)
 
-    loss_act = actb[sequential_index,actions].mean()
+    loss_act = actb[sequential_index,actions.squeeze(1)].mean()
     loss_nsb = nsb.mean()
     loss_act.backward()
     loss_nsb.backward()
@@ -128,8 +137,8 @@ def update_ppo(states, actions, log_probs, rewards, values, actnorm, batchsize, 
         # find indexs for batches
         index = slice(i * batchsize, min((i+1) * batchsize, LEN_TRAJECTORY))
 
-        states_i, chosen_actions, actnorm_i, log_probs_i, rewards_i, advantages_i = stack_lists(states[index], actions[index], actnorm, log_probs, rewards[index], advantages[index]) 
-
+        states_i, chosen_actions, actnorm_i, log_probs_i, rewards_i, advantages_i = stack_lists(states[index], actions[index], actnorm[index], log_probs[index], rewards[index], advantages[index]) 
+        chosen_actions = chosen_actions.squeeze(1)
         ### FIND RATIO
         # Get the parameters for the distribution
         parameters, values_now = PPO(states_i.squeeze(1))
@@ -139,14 +148,13 @@ def update_ppo(states, actions, log_probs, rewards, values, actnorm, batchsize, 
 
         # find chosen actions
         #chosen_actions = torch.stack(actions[index])
-
-        log_probs_now = (F.softmax(parameters[sequential_index,chosen_actions] + actnorm_i[sequential_index, chosen_actions],dim=1)).log()
+        log_probs_now = (F.softmax(parameters[sequential_index,chosen_actions] + actnorm_i[sequential_index, chosen_actions],dim=0)).log()
 
         # Find ratio pi(a|s)_now/pi(a|s)_old
         ratios = (log_probs_now - log_probs_i[sequential_index,chosen_actions]).exp()
 
         ### Get PPO loss + actb + nsb
-        loss = single_loss_ppo(ratios, rewards_i, advantages_i, values_now).mean()
+        loss = single_loss_ppo(ratios, rewards_i.squeeze(1), advantages_i.squeeze(1), values_now.squeeze(1)).mean()
         # BUG?: pass in all values, except the final one for which we don't know the reward, but we use to calculate the gae.
 
         # zero grad all optimizers
@@ -169,7 +177,7 @@ def single_pass(observation):
     7. Perform action a
     8. return log_prop(a ~ P), observation_{t+1}, r', V(s), a, observation, action_bonus, next_state_bonus  
     """
-
+    LIST_LOCATIONS.append(env.agent_pos)
     ### Policy
     # No grad => no need to detach and clone
     policy_out, v_t = PPO(observation)
@@ -204,8 +212,6 @@ def single_pass(observation):
     # perform action
         observation, env_reward, done, _ = env.step(action)
 
-        # For frame skipping, 0 = NO_ACTION
-        env.step(0)
         ## NSB 
         # Get RND prediction and target nets for reward
         observation = tensor(observation).unsqueeze(0).cuda().double()
@@ -217,27 +223,29 @@ def single_pass(observation):
     # Finds squared error between the next_state_bpnus nets
     next_state_bonus = ((pred_nsb-target_nsb)**2).sum(axis = 1) # divide by action_size for the same reason as with the act_bonus
                                                                 # Sum over axis=1, cause dim is fucked
+    #print(next_state_bonus, env_reward)
     # # loss
     # At = tensor(env_reward) + GAMMA * v_t1 - v_t0
     
     # Total reward
     with torch.no_grad():
         reward = next_state_bonus.detach().clone() + env_reward # BUG?: Deatch the next state bonus here to avoid double update and possibly nonsensical gradients
+        #reward = tensor(env_reward).unsqueeze(0).cuda() # BUG?: Deatch the next state bonus here to avoid double update and possibly nonsensical gradients
 
     ### reset if model died or achieved goal state
     #print(f"Are we done? {done}")
     if done:    
+        print("Victory")
         observation = env.reset()
         observation = tensor(observation).unsqueeze(0).cuda().double()
         observation = observation.permute((0,3,2,1)) 
-        
-        # For masking
-        done = -1
+        mask = 100
+
     else:
-        done = 1
+        mask = 1
 
     # Return stuff, so we can save it
-    return observation, action.unsqueeze(0), beta_param.log().squeeze(0), reward, v_t.squeeze(0), act_bonus, next_state_bonus, act_norm, done 
+    return observation, action.unsqueeze(0), beta_param.log().squeeze(0), reward, v_t.squeeze(0), act_bonus, next_state_bonus, act_norm, mask # "Remove" masking 
     
 
 def play(epochs, observation):
@@ -292,19 +300,16 @@ def play(epochs, observation):
 
 observation = observation.permute((2,1,0)).unsqueeze(0)
 
-VISUALIZE = True
-if VISUALIZE:
-    visualize_play(action_size, dim, PPO, RND_ACT, env, observation = None, N_moves = 1000)
-exit(0)
 
 for checkpoint in range(10):
 
     observation = play(EPOCHS, observation)
 
     print(f"Reached checkpoint {checkpoint}. Currently trained for {(checkpoint+1) * EPOCHS * LEN_TRAJECTORY} steps")
-    save_model(PPO, PATH = "./models/tmp/PPO")
-    save_model(RND_NSB, PATH = "./models/tmp/RND_NSB")
-    save_model(RND_ACT, PATH = "./models/tmp/RND_ACT")
+    save_model(PPO, PATH = "./grid_models/tmp/PPO")
+    save_model(RND_NSB, PATH = "./grid_models/tmp/RND_NSB")
+    save_model(RND_ACT, PATH = "./grid_models/tmp/RND_ACT")
+    heatmap(LIST_LOCATIONS, (25,25), f"./img/run-{checkpoint}-{len(LIST_LOCATIONS)}-heatmap.png", mean = True)
 
 PPO.eval()
 RND_ACT.eval()
@@ -315,9 +320,17 @@ if VISUALIZE:
     visualize_play(action_size, dim, PPO, RND_ACT, env, observation = None, N_moves = 1000)
 
 # Saving models
-save_model(PPO, PATH = "./models/PPO_train")
-save_model(RND_NSB, PATH = "./models/RND_NSB_train")
-save_model(RND_ACT, PATH = "./models/RND_ACT_train")
-
+save_model(PPO, PATH = "./grid_models/PPO_train")
+save_model(RND_NSB, PATH = "./grid_models/RND_NSB_train")
+save_model(RND_ACT, PATH = "./grid_models/RND_ACT_train")
 
 env.close()
+
+
+#for i, loc_maps in enumerate(LIST_LOCATIONS):
+#    heatmap(loc_maps, (25,25), f"./img/run-{i}-{len(loc_maps)}-heatmap.png")
+
+import pickle
+
+with open("list_loc.txt", "wb") as f:
+    pickle.dump(LIST_LOCATIONS, f)
