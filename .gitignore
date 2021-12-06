@@ -131,3 +131,6 @@ dmypy.json
 #fitten.py
 tst.py
 tst2.py
+heatmaps/*
+fisk
+fisk.png
