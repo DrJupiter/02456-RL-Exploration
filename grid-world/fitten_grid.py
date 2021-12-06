@@ -12,7 +12,7 @@ from gym_minigrid.wrappers import *
 # env = gym.make(env_name, render_mode='rgb_array')
 env = gym.make('MiniGrid-MultiRoom-N4-S5-v0')
 env = RGBImgPartialObsWrapper(env) # Get pixel observations
-env = ReseedWrapper(env,seeds=[2])
+env = ReseedWrapper(env,seeds=[69])
 env = ImgObsWrapper(env) # Get rid of the 'mission' field
 
 
