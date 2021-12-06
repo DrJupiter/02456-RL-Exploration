@@ -129,12 +129,11 @@ def single_optimal_move(observation, action_size, dim, PPO_model, RND_ACT_model,
     
     # get action from sample of beta
     action = torch.argmax(torch.nn.functional.softmax(policy_out + act_norm, dim = 1)) #BUG?: no detach needed here (i think) as we dont run backward on the action in any way
+    print(f"Action chosen {action}")
     
     # perform action
     observation, env_reward, done, _ = env.step(action)
 
-    # For frameskip and consistency
-    env.step(0)
     
     ## NSB 
     # Get RND prediction and target nets for reward
@@ -178,3 +177,25 @@ def stack_lists(*lists):
 
     return stacked_lists
 
+import numpy as np
+import matplotlib.pyplot as plt
+
+def heatmap(locations, size, save_path="./img/heatmap.png", mean = False):
+
+    locations =  np.array(locations)
+
+    ### initialize:
+    X,Y = size
+    map = np.zeros((X,Y))
+
+    for cords in locations:
+        map[cords[1],cords[0]] += 1
+
+    if mean:
+        map = map/len(locations)
+    #np.savetxt(save_place, map , delimiter = ",")
+
+    fig, ax = plt.subplots()
+    im = ax.imshow(map)
+    plt.colorbar(im, ax=ax)
+    plt.savefig(save_path, bbox_inches='tight')
