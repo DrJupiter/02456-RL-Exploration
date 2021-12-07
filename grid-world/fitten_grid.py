@@ -308,9 +308,9 @@ for checkpoint in range(10):
     observation = play(EPOCHS, observation)
 
     print(f"Reached checkpoint {checkpoint}. Currently trained for {(checkpoint+1) * EPOCHS * LEN_TRAJECTORY} steps")
-    save_model(PPO, PATH = "./grid_models/tmp/PPO")
-    save_model(RND_NSB, PATH = "./grid_models/tmp/RND_NSB")
-    save_model(RND_ACT, PATH = "./grid_models/tmp/RND_ACT")
+    save_model(PPO, PATH = f"./grid_models/tmp/PPO-{NAME}")
+    save_model(RND_NSB, PATH = f"./grid_models/tmp/RND_NSB-{NAME}")
+    save_model(RND_ACT, PATH = f"./grid_models/tmp/RND_ACT-{NAME}")
     heatmap(LIST_LOCATIONS, (25,25), f"./img/run-{NAME}-{checkpoint}-{len(LIST_LOCATIONS)}-heatmap.png", mean = True)
 
 PPO.eval()
