@@ -2,11 +2,11 @@ import getopt, sys
 
 
 def user_arg():
-    load_models, epochs, gamma, len_trajectory, batch_size, lr = False, int(10e7), 0.99, 10, 4, [30e-5,1e-4,1e-4]
+    load_models, epochs, gamma, len_trajectory, batch_size, lr, seed, name = False, int(10e7), 0.99, 10, 4, [30e-5,1e-4,1e-4], 0, ""
     argument_list = sys.argv[1:]
 
     # load, epochs: int, gamma: float, trajectory: int, batches:int, 
-    options = "le:g:t:b:"
+    options = "le:g:t:b:n:s:"
     
     # learning rates: List[float] 
     long_options = ["LR ="]
@@ -44,12 +44,20 @@ def user_arg():
                 for val in currentValue.split(','):
                     lr.append(float(val))
                 print (("Using learning rates (% s)") % (lr))
+            
+            elif currentArgument in ("-n"):
+                name = str(currentValue)
+                print(f"Added {name} for indexing of heatmaps")
+            
+            elif currentArgument in ("-s"):
+                seed = int(currentValue)
+                print(f"Using seed {seed} for rooms")
 
     except getopt.error as err:
         # output error, and return with an error code
         print (str(err))
 
-    return load_models, epochs, gamma, len_trajectory, batch_size, lr 
+    return load_models, epochs, gamma, len_trajectory, batch_size, lr, seed, name 
 
 if __name__ == "__main__":
     print(user_arg())

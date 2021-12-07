@@ -7,12 +7,21 @@ torch.autograd.set_detect_anomaly(True)
 import gym
 from gym_minigrid.wrappers import *
 
+from user_arg import user_arg
+
+# Initialize global variables
+# DEFAULT: 
+# True,     int(10e7), 0.99,     10,           4,      [30e-5,1e-4,1e-4] 
+LOAD_MODELS, EPOCHS, GAMMA, LEN_TRAJECTORY, BATCH_SIZE, LEARNING_RATES, SEED, NAME= user_arg()
+BATCH_SIZE_RND = 4
+LIST_LOCATIONS = []
+
 # make env
 # env_name = "MontezumaRevenge-v0"
 # env = gym.make(env_name, render_mode='rgb_array')
 env = gym.make('MiniGrid-MultiRoom-N4-S5-v0')
 env = RGBImgPartialObsWrapper(env) # Get pixel observations
-env = ReseedWrapper(env,seeds=[69])
+env = ReseedWrapper(env,seeds=[SEED])
 env = ImgObsWrapper(env) # Get rid of the 'mission' field
 
 
@@ -29,14 +38,7 @@ from action_embed import obs_act_embed # act_embed
 
 from utils import compute_gae, stack_lists, storage_list, save_model, load_model, visualize_play, heatmap
 
-from user_arg import user_arg
 
-# Initialize global variables
-# DEFAULT: 
-# True,     int(10e7), 0.99,     10,           4,      [30e-5,1e-4,1e-4] 
-LOAD_MODELS, EPOCHS, GAMMA, LEN_TRAJECTORY, BATCH_SIZE, LEARNING_RATES= user_arg()
-BATCH_SIZE_RND = 4
-LIST_LOCATIONS = []
 
 
 if not LOAD_MODELS:
@@ -309,7 +311,7 @@ for checkpoint in range(10):
     save_model(PPO, PATH = "./grid_models/tmp/PPO")
     save_model(RND_NSB, PATH = "./grid_models/tmp/RND_NSB")
     save_model(RND_ACT, PATH = "./grid_models/tmp/RND_ACT")
-    heatmap(LIST_LOCATIONS, (25,25), f"./img/run-{checkpoint}-{len(LIST_LOCATIONS)}-heatmap.png", mean = True)
+    heatmap(LIST_LOCATIONS, (25,25), f"./img/run-{NAME}-{checkpoint}-{len(LIST_LOCATIONS)}-heatmap.png", mean = True)
 
 PPO.eval()
 RND_ACT.eval()
