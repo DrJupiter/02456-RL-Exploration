@@ -334,5 +334,5 @@ env.close()
 
 import pickle
 
-with open("list_loc.txt", "wb") as f:
+with open(f"{NAME}-list_loc.txt", "wb") as f:
     pickle.dump(LIST_LOCATIONS, f)
