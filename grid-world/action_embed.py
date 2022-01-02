@@ -13,7 +13,7 @@ def act_embed(action_num: int, in_dims: tuple, N_acts: int):
     # act_embed[int(action_num*rate),:] = 1
     act_embed[int(action_num*rate):int(action_num*rate)+rate,:] = 1
 
-    return act_embed #.cuda().double() # same dims as in_dims[:2], always same sum
+    return act_embed.cuda().double() # same dims as in_dims[:2], always same sum
 
 def obs_act_embed(action_num: list, in_dims: tuple, N_acts: int, obs: tensor):
 
