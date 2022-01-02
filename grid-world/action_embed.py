@@ -25,5 +25,5 @@ if __name__ == "__main__":
     value = 2222
     # print(obs_act_embed(3, (210,160,value), 18, torch.zeros(1,210,160,3)).shape)
     # print("expected size: (210,160,4)")
-    print(act_embed(0,[22,6],22))
+    print(act_embed(22,[10,4],4))
     
